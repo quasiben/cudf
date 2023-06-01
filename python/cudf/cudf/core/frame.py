@@ -1094,12 +1094,21 @@ class Frame(BinaryOperand, Scannable):
             }
 
         # Handle non-dict arrays
-        cudf_non_category_frame = {
-            name: col
-            for name, col in zip(
-                data.column_names, libcudf.interop.from_arrow(data)
-            )
-        }
+        try:
+            cudf_non_category_frame = {
+                name: col
+                for name, col in zip(
+                    data.column_names, libcudf.interop.from_arrow(data)
+                )
+            }
+        except Exception as e:
+            print(data)
+            print(type(data))
+            for d in dir(data):
+                print(d, getattr(data, d))
+            print(str(e))
+            import sys
+            sys.exit(1)
 
         result = {**cudf_non_category_frame, **cudf_category_frame}
 
