@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
+import operator
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -25,12 +27,21 @@ class ColumnStats:
 
     dtype: plc.DataType
     """Column data type."""
-    unique_count: int
+    unique_count: int | None
     """Estimated unique count for this column."""
     element_size: int
     """Estimated byte size for each element of this column."""
     file_size: int | None
     """Estimated file size for this column (Optional)."""
+
+    @classmethod
+    def merge(cls, *stats: ColumnStats) -> Self:
+        """Merge column stats that purportedly represent the same column."""
+        assert len(stats) > 0
+        unique_count = max(
+            (s.unique_count for s in stats if s.unique_count is not None), default=None
+        )
+        return cls(stats[0].dtype, unique_count, stats[0].element_size, None)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,11 +57,23 @@ class TableStats:
     def merge(cls, *tables: TableStats) -> Self:
         """Merge multiple TableStats objects."""
         num_rows = 0
-        column_stats: dict[str, ColumnStats] = {}
-        for table_stats in tables:
-            column_stats.update(table_stats.column_stats)
-            num_rows = max(num_rows, table_stats.num_rows)
+        column_stats = cls.merge_column_stats(*(t.column_stats for t in tables))
+        num_rows = max(t.num_rows for t in tables)
         return cls(column_stats, int(num_rows))
+
+    @staticmethod
+    def merge_column_stats(*stats: dict[str, ColumnStats]) -> dict[str, ColumnStats]:
+        """Merge column stats dictionaries."""
+        keyfunc = operator.itemgetter(0)
+        return {
+            name: ColumnStats.merge(*(stats for _, stats in group))
+            for name, group in itertools.groupby(
+                sorted(
+                    itertools.chain.from_iterable(s.items() for s in stats), key=keyfunc
+                ),
+                keyfunc,
+            )
+        }
 
 
 class PartitionInfo:
