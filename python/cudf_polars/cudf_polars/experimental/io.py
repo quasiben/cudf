@@ -377,21 +377,22 @@ def _sample_pq_statistics(ir: Scan) -> TableStats:
                 # count is 100 / num_rows_in_group * num_rows_in_file
                 if row_group_unique_count == row_group_num_rows:
                     unique_count_estimates[name] = num_rows_total
-        if (
-            ir.predicate is not None
-            and isinstance((pred := ir.predicate.value), expr.BinOp)
-            and pred.op is plc.binaryop.BinaryOperator.EQUAL
-        ):
-            try:
-                (col,) = (c for c in pred.children if isinstance(c, expr.Col))
-                (lit,) = (c for c in pred.children if isinstance(c, expr.Literal))
-                # Equality between column and literal. Assume uniformly distributed values
-                if unique_count_estimates.get(col.name) is not None:
-                    num_rows_total = max(
-                        1, num_rows_total // unique_count_estimates[col.name]
-                    )
-            except ValueError:
-                pass
+        if ir.predicate is not None:
+            # Default assume 20% reduction, could be much smarter here
+            selectivity = 0.8
+            if (
+                isinstance((pred := ir.predicate.value), expr.BinOp)
+                and pred.op is plc.binaryop.BinaryOperator.EQUAL
+            ):
+                try:
+                    (col,) = (c for c in pred.children if isinstance(c, expr.Col))
+                    (lit,) = (c for c in pred.children if isinstance(c, expr.Literal))
+                    # Equality between column and literal. Assume uniformly distributed values
+                    if (n := unique_count_estimates.get(col.name)) is not None:
+                        selectivity = 1 / n
+                except ValueError:
+                    pass
+            num_rows_total = max(1, int(num_rows_total * selectivity))
 
     # Construct estimated TableStats
     table_stats = TableStats(
