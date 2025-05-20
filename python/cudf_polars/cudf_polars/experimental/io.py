@@ -433,6 +433,8 @@ def _(
                     SplitScan(ir.schema, base_scan, sindex, plan.factor)
                     for sindex in range(plan.factor)
                 )
+            if len(slices) == 1:
+                return ir, {ir: PartitionInfo(count=1, table_stats=plan.table_stats)}
             new_node = Union(ir.schema, None, *slices)
             partition_info = {slice: PartitionInfo(count=1) for slice in slices} | {
                 new_node: PartitionInfo(count=len(slices), table_stats=plan.table_stats)
@@ -455,6 +457,8 @@ def _(
                 )
                 for i in range(0, len(paths), plan.factor)
             ]
+            if len(groups) == 1:
+                return ir, {ir: PartitionInfo(count=1, table_stats=plan.table_stats)}
             new_node = Union(ir.schema, None, *groups)
             partition_info = {group: PartitionInfo(count=1) for group in groups} | {
                 new_node: PartitionInfo(count=len(groups), table_stats=plan.table_stats)
