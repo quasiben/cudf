@@ -793,6 +793,7 @@ add_library(
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
   src/hash/murmurhash3_x64_128.cu
+  src/hash/spark_murmurhash3_x86_32.cu
   src/hash/sha1_hash.cu
   src/hash/sha224_hash.cu
   src/hash/sha256_hash.cu
@@ -872,6 +873,7 @@ add_library(
   src/io/parquet/experimental/hybrid_scan_preprocess.cu
   src/io/parquet/experimental/page_index_filter.cu
   src/io/parquet/experimental/page_index_filter_utils.cu
+  src/io/parquet/experimental/parquet_footer.cpp
   src/io/parquet/experimental/variant_extract.cu
   src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
@@ -943,6 +945,9 @@ add_library(
   src/join/hash_join/full_join_retrieve.cu
   src/join/hash_join/full_join_size.cu
   src/join/hash_join/hash_join.cu
+  src/join/hash_join/hash_join_size.cu
+  src/join/hash_join/hash_join_retrieve.cu
+  src/join/hash_join/hash_csr_kernels.cu
   src/join/hash_join/inner_join_match_context.cpp
   src/join/hash_join/inner_join_retrieve.cu
   src/join/hash_join/inner_join_size.cu
