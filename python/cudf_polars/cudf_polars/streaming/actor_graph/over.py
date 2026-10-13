@@ -547,6 +547,7 @@ async def _evaluate_and_route_to_origin(
     stamps: OriginStamps,
     *,
     sort_by_input_order: bool,
+    broadcast_to_ranks: int = 0,
 ) -> None:
     """Window-evaluate each local forward partition, then ship rows back to their origin."""
     async with return_shuffle.inserting() as inserter:
@@ -570,7 +571,20 @@ async def _evaluate_and_route_to_origin(
                 _split_off_origin_rank, evaluated, context.br()
             )
             if routed is not None:
-                await inserter.insert_index(*routed)
+                if broadcast_to_ranks:
+                    # Only rank 0 inserted duplicated input into the forward
+                    # shuffle. Every rank still owns those input rows, so
+                    # return each evaluated group to all owners. Preserve
+                    # the original chunk/row stamps for local reassembly.
+                    payload, _ = routed
+                    nrows = payload.shape[0]
+                    for rank in range(broadcast_to_ranks):
+                        await inserter.insert_split(
+                            payload,
+                            [0] * rank + [nrows] * (broadcast_to_ranks - rank - 1),
+                        )
+                else:
+                    await inserter.insert_index(*routed)
 
 
 async def _reassemble_input_chunks(
@@ -646,7 +660,7 @@ async def _shuffle_and_reassemble(
         partitioning=maybe_remap_partitioning(
             ir, metadata_in.partitioning, context=context
         ),
-        duplicated=False,
+        duplicated=metadata_in.duplicated,
     )
     await send_metadata(ch_out, context, metadata_out)
 
@@ -705,6 +719,7 @@ async def _shuffle_and_reassemble(
         return_shuffle,
         stamps,
         sort_by_input_order=sort_by_input_order,
+        broadcast_to_ranks=comm.nranks if metadata_in.duplicated else 0,
     )
     await _reassemble_input_chunks(
         context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer

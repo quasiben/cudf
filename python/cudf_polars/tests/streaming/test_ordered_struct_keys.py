@@ -41,3 +41,32 @@ def test_multi_column_ordered_window(engine, mixed, empty):
     if mixed:
         expressions.append(pl.col("x").mean().over(["g", "year"]).alias("avg"))
     assert_gpu_result_equal(q.with_columns(expressions), engine=engine)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_ordered_window_after_replicated_top_k(engine, empty, mixed):
+    # A distributed top-k emits a replicated result. Ordered windows must
+    # preserve that row ownership so sibling mean/passthrough columns align.
+    q = pl.LazyFrame(
+        {
+            "g": ["a", "a", "a", "b", "b", "b", "c"],
+            "year": [2000, 2000, 2001, 2000, 2001, 2001, 2000],
+            "month": [2, 1, 1, 1, 2, 1, 1],
+            "x": [1.0, None, 3.0, 4.0, 5.0, 6.0, 7.0],
+        }
+    )
+    if empty:
+        q = q.clear()
+    q = q.sort(["g", "year", "month"]).head(6)
+    expressions = [
+        pl.col("year")
+        .rank(method="ordinal")
+        .over("g", order_by=["year", "month"])
+        .alias("rn")
+    ]
+    if mixed:
+        expressions.append(pl.col("x").mean().over(["g", "year"]).alias("avg"))
+    assert_gpu_result_equal(
+        q.with_columns(expressions), engine=engine, check_row_order=True
+    )
