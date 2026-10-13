@@ -11,8 +11,8 @@ import polars as pl
 import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataFrame, DataType
-from cudf_polars.dsl.expr import Col
-from cudf_polars.dsl.ir import Slice, Sort
+from cudf_polars.dsl.expr import Col, NamedExpr
+from cudf_polars.dsl.ir import HStack, Projection, Slice, Sort
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.streaming.dispatch import lower_ir_node
@@ -248,15 +248,39 @@ def _has_simple_zlice(zlice: tuple[int, int | None] | None) -> bool:
 def _(
     ir: Sort, rec: LowerIRTransformer
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
-    # Check sort keys
-    if not all(
-        isinstance(expr, Col) for expr in traversal([e.value for e in ir.by])
-    ):  # pragma: no cover
-        return _lower_ir_fallback(
-            ir,
-            rec,
-            msg="sort currently only supports column names as `by` keys.",
+    if any(not isinstance(e.value, Col) for e in ir.by):
+        # Materialize row-local keys before sorting so the distributed sort and
+        # bounded top-k actors can continue to operate on concrete columns.
+        # Global expressions must not be evaluated independently on each chunk.
+        if not all(e.is_pointwise for e in traversal([e.value for e in ir.by])):
+            return _lower_ir_fallback(
+                ir,
+                rec,
+                msg="Non-pointwise sort keys are not supported for multiple partitions.",
+            )
+        names = unique_names(ir.children[0].schema)
+        schema = ir.children[0].schema.copy()
+        columns = []
+        by = []
+        for e in ir.by:
+            if isinstance(e.value, Col):
+                by.append(e)
+            else:
+                name = next(names)
+                schema[name] = e.value.dtype
+                columns.append(NamedExpr(name, e.value))
+                by.append(NamedExpr(name, Col(e.value.dtype, name)))
+        child = HStack(schema, columns, True, ir.children[0])  # noqa: FBT003
+        sort = Sort(
+            schema,
+            by,
+            ir.order,
+            ir.null_order,
+            ir.stable,
+            ir.zlice,
+            child,
         )
+        return rec(Projection(ir.schema, sort))
 
     if ir.zlice is not None and not _has_simple_zlice(ir.zlice):
         # Pull "complex" slices out of the Sort node altogether.

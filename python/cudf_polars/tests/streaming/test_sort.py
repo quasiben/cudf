@@ -59,6 +59,50 @@ def df():
     )
 
 
+@pytest.mark.parametrize("operation", ["full", "head", "tail", "slice"])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_computed_sort_keys(engine, operation, nulls_last):
+    # Multiple chunks, repeated key values, nulls, and a column resembling an
+    # internal name exercise key materialization and schema restoration.
+    frame = pl.LazyFrame(
+        {
+            "x": [3, None, 1, 3, 2, 1, None, 2, 4, 1],
+            "y": [1, 0, 2, 1, 0, 3, 4, 1, 2, 2],
+            "__0": list(range(10)),
+        }
+    )
+    q = frame.sort(
+        [
+            pl.when(pl.col("y") > 1).then(pl.col("x")).otherwise(None),
+            pl.col("x") - pl.col("y"),
+            "__0",
+        ],
+        descending=[True, False, False],
+        nulls_last=nulls_last,
+        maintain_order=True,
+    )
+    if operation == "head":
+        q = q.head(4)
+    elif operation == "tail":
+        q = q.tail(4)
+    elif operation == "slice":
+        q = q.slice(2, 5)
+        # Offset slices retain the existing single-partition fallback. This
+        # change only expands the supported sort-key expressions.
+        with pytest.raises(NotImplementedError, match="slice not supported"):
+            q.collect(engine=engine)
+        return
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_non_pointwise_sort_key_fallback(engine):
+    q = pl.LazyFrame({"x": list(range(10))}).sort(
+        pl.when(pl.len() == 10).then(pl.col("x")).otherwise(-pl.col("x"))
+    )
+    with pytest.raises(NotImplementedError, match="Non-pointwise sort keys"):
+        q.collect(engine=engine)
+
+
 def large_frames():
     # Three partitions are sufficient to exercise distributed merge ordering;
     # additional partitions only repeat the same merge path in this unit test.
