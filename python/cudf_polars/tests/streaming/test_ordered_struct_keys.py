@@ -58,7 +58,9 @@ def test_ordered_window_after_replicated_top_k(engine, empty, mixed):
     )
     if empty:
         q = q.clear()
-    q = q.sort(["g", "year", "month"]).head(6)
+    # Keep g out of the leading ordering keys so the ordered g window
+    # exercises its forward/return shuffle rather than the chunkwise path.
+    q = q.sort(["year", "month", "g"]).head(6)
     expressions = [
         pl.col("year")
         .rank(method="ordinal")
