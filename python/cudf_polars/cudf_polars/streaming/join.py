@@ -35,7 +35,6 @@ from cudf_polars.streaming.utils import (
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
 
-    from cudf_polars.dsl.expr import NamedExpr
     from cudf_polars.dsl.ir import IR
     from cudf_polars.streaming.filter_hint import JoinSide
     from cudf_polars.streaming.parallel import LowerIRTransformer
@@ -319,8 +318,8 @@ def _(
     left, pi_left = rec(left)
     right, pi_right = rec(right)
 
-    # Fallback to single partition on the smaller table whenever either
-    # side has more than one partition.
+    # A bounded side can be broadcast while the other side remains streamed.
+    # Retain the fallback policy when both inputs need multiple partitions.
     left_count = pi_left[left].count
     right_count = pi_right[right].count
     output_count = max(left_count, right_count)
