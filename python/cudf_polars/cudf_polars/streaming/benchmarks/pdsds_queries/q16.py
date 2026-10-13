@@ -108,26 +108,27 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
             & pl.col("cc_county").is_in(county)
         )
     )
-    # Handle EXISTS condition: for each row, check if there's another row with same order but different warehouse
-    # Self-join to find rows that have other rows with same order number but different warehouse
-    exists_condition = (
-        filtered_sales.with_row_index("row_id")
-        .join(
-            catalog_sales.select(["cs_order_number", "cs_warehouse_sk"]).rename(
-                {"cs_warehouse_sk": "other_warehouse_sk"}
-            ),
-            on="cs_order_number",
+    # EXISTS is true exactly when a non-null warehouse differs from an order's
+    # non-null minimum or maximum. One summary row per order preserves sales
+    # duplicates without assigning row IDs independently in two branches.
+    relevant_orders = filtered_sales.select("cs_order_number").unique()
+    warehouse_summary = (
+        catalog_sales.join(relevant_orders, on="cs_order_number", how="semi")
+        .group_by("cs_order_number")
+        .agg(
+            pl.col("cs_warehouse_sk").min().alias("_min_warehouse_sk"),
+            pl.col("cs_warehouse_sk").max().alias("_max_warehouse_sk"),
         )
-        .filter(pl.col("cs_warehouse_sk") != pl.col("other_warehouse_sk"))
-        .select("row_id")
-        .unique()
     )
     # Handle NOT EXISTS condition: orders that don't have returns
     returned_orders = catalog_returns.select("cr_order_number").unique()
     return QueryResult(
         frame=(
-            filtered_sales.with_row_index("row_id")
-            .join(exists_condition, on="row_id")
+            filtered_sales.join(warehouse_summary, on="cs_order_number")
+            .filter(
+                (pl.col("cs_warehouse_sk") != pl.col("_min_warehouse_sk"))
+                | (pl.col("cs_warehouse_sk") != pl.col("_max_warehouse_sk"))
+            )
             .join(
                 returned_orders,
                 left_on="cs_order_number",

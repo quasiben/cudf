@@ -342,6 +342,7 @@ def assert_conditional_join(reverse, max_rows_per_partition, streaming_engine_fa
     with warns_on_spmd(
         streaming_engine,
         UserWarning,
+        when=max_rows_per_partition < 9,
         match="ConditionalJoin not supported for multiple partitions.",
     ):
         assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)

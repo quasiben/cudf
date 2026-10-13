@@ -141,9 +141,15 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .sort("bucket")
     )
 
-    # Pivot 5 rows → 1 row with 5 named columns (operates on 5 rows, trivially fast)
+    # Each bucket has at most one row. A masked max therefore preserves the
+    # filtered-first result, including null values and absent buckets, while
+    # using a decomposable reduction instead of gathering the pivot input.
     wide = stats.select(
-        pl.col("value").filter(pl.col("bucket") == i).first().alias(f"bucket{i}")
+        pl.when(pl.col("bucket") == i)
+        .then(pl.col("value"))
+        .otherwise(None)
+        .max()
+        .alias(f"bucket{i}")
         for i in range(1, 6)
     )
 

@@ -8,8 +8,13 @@ import operator
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from cudf_polars.dsl.ir import ConditionalJoin, Join, Projection, Slice
+import polars as pl
+
+from cudf_polars.containers import DataType
+from cudf_polars.dsl.expr import Col, Literal, NamedExpr
+from cudf_polars.dsl.ir import ConditionalJoin, HStack, Join, Projection, Slice
 from cudf_polars.dsl.traversal import traversal
+from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.filter_hint import (
@@ -326,10 +331,11 @@ def _(
         else:
             right = Repartition(right.schema, right)
             pi_right[right] = PartitionInfo(count=1)
-        _fallback_inform(
-            "ConditionalJoin not supported for multiple partitions.",
-            config_options,
-        )
+        if min(left_count, right_count) > 1:
+            _fallback_inform(
+                "ConditionalJoin not supported for multiple partitions.",
+                config_options,
+            )
 
     # Reconstruct and return
     new_node = ir.reconstruct([left, right])
@@ -342,6 +348,27 @@ def _(
 def _(
     ir: Join, rec: LowerIRTransformer
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if ir.options[0] == "Cross" and ir.options[5] == "none":
+        # A constant-key inner join has cross-join semantics and reuses the
+        # existing dynamic broadcast/shuffle actor rather than gathering both
+        # inputs merely because the join has no keys.
+        names = unique_names(
+            (*ir.schema, *ir.children[0].schema, *ir.children[1].schema)
+        )
+        key = next(names)
+        while key + ir.options[3] in ir.schema:
+            key = next(names)
+        dtype = DataType(pl.Int8())
+        key_expr = NamedExpr(key, Literal(dtype, 1))
+        children = tuple(
+            HStack(child.schema | {key: dtype}, [key_expr], True, child)  # noqa: FBT003
+            for child in ir.children
+        )
+        on = [NamedExpr(key, Col(dtype, key))]
+        options = ("Inner", ir.options[1], ir.options[2], ir.options[3], True, "none")
+        joined = Join(ir.schema | {key: dtype}, on, on, options, *children)
+        return rec(Projection(ir.schema, joined))
+
     # Pull slice operations out of the Join before lowering
     if (zlice := ir.options[2]) is not None:
         offset, length = zlice

@@ -16,6 +16,7 @@ from cudf_polars.dsl.ir import Empty, HConcat, HStack, Projection, Scan, Select,
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.streaming.base import PartitionInfo
+from cudf_polars.streaming.complete_frame import CompleteFrameInput
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.expressions import (
     decompose_expr_graph,
@@ -508,6 +509,17 @@ def _(
                 config_options,
             )
         except NotImplementedError:
+            if _dynamic_planning_on(config_options):
+                # Static partition estimates may describe the large source,
+                # even when aggregation/top-k has already produced a complete
+                # replicated input. Check ownership before allowing a gather.
+                guarded = CompleteFrameInput(child.schema, child)
+                gathered = Repartition(child.schema, guarded)
+                native = ir.reconstruct([gathered])
+                partition_info[guarded] = pi
+                partition_info[gathered] = PartitionInfo(count=1)
+                partition_info[native] = PartitionInfo(count=1)
+                return native, partition_info
             return _lower_ir_fallback(
                 ir, rec, msg="This selection is not supported for multiple partitions."
             )
