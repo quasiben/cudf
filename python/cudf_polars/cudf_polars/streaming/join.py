@@ -365,7 +365,17 @@ def _(
         )
         on = [NamedExpr(key, Col(dtype, key))]
         options = ("Inner", ir.options[1], ir.options[2], ir.options[3], True, "none")
-        joined = Join(ir.schema | {key: dtype}, on, on, options, *children)
+        # Native inner join emits every left column (including the key),
+        # followed by the non-key right columns. Match that physical order
+        # before the outer projection removes the temporary key.
+        joined_schema = children[0].schema.copy()
+        joined_schema.update(
+            {
+                name + ir.options[3] if name in joined_schema else name: column_dtype
+                for name, column_dtype in ir.children[1].schema.items()
+            }
+        )
+        joined = Join(joined_schema, on, on, options, *children)
         return rec(Projection(ir.schema, joined))
 
     # Pull slice operations out of the Join before lowering
