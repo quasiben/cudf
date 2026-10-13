@@ -32,7 +32,9 @@ Forward + return shuffle (non-decomposable aggregations)
     to the rank that originally received it (output channels are
     rank-local, so only the originating rank can emit), and the rows are
     reassembled in input order using stamps that travel with the data
-    through both shuffles.
+    through both shuffles. For duplicated input, only rank 0 inserts
+    logical rows, and the return shuffle sends the evaluated rows to
+    every rank, preserving the input's duplicated ownership.
 """
 
 from __future__ import annotations
@@ -518,12 +520,9 @@ async def _distribute_by_group(
             )
             sequence_numbers.append(msg.sequence_number)
             if not skip_insert:
-                # TODO: For duplicated input only rank 0 inserts here, and
-                # every row is stamped with origin_rank=0, so the return
-                # shuffle routes all output back to rank 0 and ranks
-                # 1..nranks-1 sit idle on emit. Slice the duplicated input
-                # across ranks (e.g. stripe by row index) and stamp each
-                # slice with its target origin rank to distribute emit work.
+                # Duplicated input is inserted only by rank 0, avoiding
+                # repeated logical rows in each group. The return shuffle
+                # restores those rows to every rank that owns the input.
                 with opaque_memory_usage(extra):
                     stamped = await ir_context.to_thread(
                         _append_origin_stamps,
