@@ -57,13 +57,18 @@ def test_select(df, engine):
 @pytest.mark.parametrize("fallback_mode", ["silent", "raise", "warn", "foo"])
 def test_select_reduce_fallback(df, spmd_engine_factory, fallback_mode):
     engine = spmd_engine_factory(
-        StreamingOptions(max_rows_per_partition=3, fallback_mode=fallback_mode),
+        StreamingOptions(
+            max_rows_per_partition=3,
+            fallback_mode=fallback_mode,
+            dynamic_planning=None,
+        ),
     )
     match = "This selection is not supported for multiple partitions."
 
     query = df.select(
         (pl.col("a") + pl.col("b")).max(),
-        # NOTE: We don't support `median` yet
+        # Static planning cannot decompose median; this exercises its fallback
+        # policy rather than dynamic evaluation of an already complete frame.
         (pl.col("a") * 2 + pl.col("b")).alias("d").median(),
     )
 
@@ -252,19 +257,14 @@ def test_select_mean_with_decimals(engine):
 
 def test_select_with_len(streaming_engine_factory):
     engine = streaming_engine_factory(
-        StreamingOptions(max_rows_per_partition=3, fallback_mode="warn"),
+        StreamingOptions(max_rows_per_partition=3, fallback_mode="raise"),
     )
     df1 = pl.LazyFrame({"c0": [1] * 4})
     df2 = pl.LazyFrame({"c0": [2] * 4})
     q = pl.concat([df1.join(df2, how="cross"), df1.with_columns(pl.lit(None))]).select(
         pl.len()
     )
-    with warns_on_spmd(
-        engine,
-        UserWarning,
-        match="Cross join not support for multiple partitions",
-    ):
-        assert_gpu_result_equal(q, engine=engine)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_sub_expr_replaces_col():
