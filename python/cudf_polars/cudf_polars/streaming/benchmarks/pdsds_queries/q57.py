@@ -141,10 +141,13 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 .mean()
                 .over(["i_category", "i_brand", "cc_name", "d_year"])
                 .alias("avg_monthly_sales"),
+                # An explicit struct preserves multi-column ordering without
+                # the row_encode node that Polars does not expose to visitors.
                 pl.col("d_year")
                 .rank(method="ordinal")
                 .over(
-                    ["i_category", "i_brand", "cc_name"], order_by=["d_year", "d_moy"]
+                    ["i_category", "i_brand", "cc_name"],
+                    order_by=pl.struct("d_year", "d_moy"),
                 )
                 .alias("rn"),
             ]

@@ -2153,7 +2153,7 @@ class Select(IR):
                 scan.parquet_options,
                 None,
             )
-            dtype = DataType(pl.UInt32())
+            dtype = self.exprs[0].value.dtype
             col = Column(
                 plc.Column.from_scalar(
                     plc.Scalar.from_py(effective_rows, dtype.plc_type, stream=stream),

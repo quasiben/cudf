@@ -16,13 +16,16 @@ from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr as ir_expr
 from cudf_polars.dsl.ir import ConditionalJoin
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 FUSED_PREDICATE_XFAIL = pytest.mark.xfail(
+    condition=POLARS_VERSION_LT_21,
     reason="Polars 2.0 plans an equi join with a residual predicate as a "
-    "'fused predicate' join, which its visitor does not expose"
+    "'fused predicate' join, which its visitor does not expose",
 )
 MISMATCHED_DECIMAL_SCALE_XFAIL = pytest.mark.xfail(
-    reason="Polars 2.0 cannot join decimals with different scales on CPU"
+    condition=POLARS_VERSION_LT_21,
+    reason="Polars 2.0 cannot join decimals with different scales on CPU",
 )
 
 
@@ -293,7 +296,9 @@ def test_join_maintain_order_with_slice(
         pl.col("foo") == pl.col("bar"),
         pytest.param(
             pl.col("foo") != pl.col("bar"),
-            marks=pytest.mark.xfail(reason="nested loop join"),
+            marks=pytest.mark.xfail(
+                condition=POLARS_VERSION_LT_21, reason="nested loop join"
+            ),
         ),
     ],
 )
@@ -438,3 +443,26 @@ def test_conditional_join_cuda_context_initialized():
     t = threading.Thread(target=ConditionalJoin.Predicate, args=(predicate_expr,))
     t.start()
     t.join()
+
+
+@pytest.mark.skipif(POLARS_VERSION_LT_21, reason="Requires Polars IR 16")
+@pytest.mark.parametrize("how", ["inner", "cross"])
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize("empty", [None, "left", "right"])
+def test_join_residual_predicate(engine, how, nulls_equal, empty):
+    left = pl.LazyFrame({"key": [1, 1, 2, None], "value": [3, None, 1, 2]})
+    right = pl.LazyFrame({"key": [1, 1, 2, None], "value": [1, 4, 2, 3]})
+    if empty == "left":
+        left = left.head(0)
+    elif empty == "right":
+        right = right.head(0)
+    query = left.join(
+        right,
+        on="key" if how == "inner" else None,
+        how=how,
+        nulls_equal=nulls_equal,
+        suffix="_rhs",
+    ).filter(pl.col("value") + pl.col("value_rhs") > 4)
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+    # A limit must count rows that satisfy the residual predicate.
+    assert_gpu_result_equal(query.head(2).select(pl.len()), engine=engine)

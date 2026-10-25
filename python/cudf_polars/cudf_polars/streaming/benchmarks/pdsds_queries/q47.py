@@ -168,11 +168,13 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 )
                 .alias("avg_monthly_sales"),
                 # Window function: RANK over partition by category, brand, store, company ordered by year, month
+                # An explicit struct preserves multi-column ordering without
+                # the row_encode node that Polars does not expose to visitors.
                 pl.col("d_year")
                 .rank(method="ordinal")
                 .over(
                     ["i_category", "i_brand", "s_store_name", "s_company_name"],
-                    order_by=["d_year", "d_moy"],
+                    order_by=pl.struct("d_year", "d_moy"),
                 )
                 .alias("rn"),
             ]

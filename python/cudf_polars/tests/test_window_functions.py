@@ -180,3 +180,37 @@ def test_rolling_closed(engine: pl.GPUEngine, request, df: pl.LazyFrame, closed:
         ]
     )
     assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_window_struct_order_by(engine, descending, nulls_last):
+    frame = pl.LazyFrame(
+        {
+            "group": [1, 1, 2, 1, 2, 2],
+            "year": [2001, 2000, 2001, 2001, 2000, 2001],
+            "month": [2, 12, 2, 1, 1, 1],
+            "value": [1, 2, 3, 4, 5, 6],
+        }
+    )
+    query = frame.with_columns(
+        pl.col("value")
+        .cum_sum()
+        .over(
+            "group",
+            order_by=pl.struct("year", "month"),
+            descending=descending,
+            nulls_last=nulls_last,
+        )
+        .alias("cumulative"),
+        pl.col("year")
+        .rank(method="ordinal")
+        .over(
+            "group",
+            order_by=pl.struct("year", "month"),
+            descending=descending,
+            nulls_last=nulls_last,
+        )
+        .alias("rank"),
+    )
+    assert_gpu_result_equal(query, engine=engine)

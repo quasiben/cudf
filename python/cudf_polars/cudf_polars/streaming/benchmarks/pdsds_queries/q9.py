@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
-from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
+from cudf_polars.streaming.benchmarks.utils import COUNT_DTYPE, QueryResult, get_data
 
 if TYPE_CHECKING:
     from cudf_polars.streaming.benchmarks.utils import RunConfig
@@ -105,7 +105,11 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     store_sales = get_data(run_config.dataset_path, "store_sales", run_config.suffix)
     reason = get_data(run_config.dataset_path, "reason", run_config.suffix)
 
-    thresholds = pl.LazyFrame({"bucket": [1, 2, 3, 4, 5], "threshold": list(rc)})
+    # Match pl.len() on both 32-bit and 64-bit Polars runtimes. Mixing
+    # UInt64 counts with Int64 thresholds promotes comparisons to Int128.
+    thresholds = pl.LazyFrame(
+        {"bucket": [1, 2, 3, 4, 5], "threshold": pl.Series(rc, dtype=COUNT_DTYPE)}
+    )
 
     # Single scan: the 5 ss_quantity ranges are non-overlapping, so a group_by
     # computes all counts and averages in one pass over store_sales.

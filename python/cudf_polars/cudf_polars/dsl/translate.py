@@ -252,7 +252,7 @@ class Translator:
         # IR is versioned with major.minor, minor is bumped for backwards
         # compatible changes (e.g. adding new nodes), major is bumped for
         # incompatible changes (e.g. renaming nodes).
-        if (version := self.visitor.version()) >= (15, 3):
+        if (version := self.visitor.version()) > (16, 0):
             e = NotImplementedError(
                 f"No support for polars IR {version=}"
             )  # pragma: no cover; no such version for now.
@@ -786,7 +786,35 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
     if _contains_categorical_key(left_on) or _contains_categorical_key(right_on):
         raise NotImplementedError("Joining on Categorical/Enum keys is not supported")
 
-    if (how := node.options[0]) in {
+    how = node.options[0]
+    if isinstance(how, tuple) and len(how) == 2:
+        # IR 16 exposes residual predicates on equi joins and cross joins.
+        # For inner joins these are equivalent to filtering the joined rows.
+        # Outer/semi/anti joins require evaluating the predicate while matching.
+        how, predicate_kind = how
+        if how not in {"Inner", "Cross"} or predicate_kind not in {
+            "fused_predicate",
+            "cross_and_filter",
+        }:
+            raise NotImplementedError(f"Unsupported join predicate for {how}")
+        _, nulls_equal, zlice, suffix, coalesce, maintain_order = node.options
+        joined = ir.Join(
+            schema,
+            left_on,
+            right_on,
+            (how, nulls_equal, None, suffix, coalesce, maintain_order),
+            inp_left,
+            inp_right,
+        )
+        mask = translate_named_expr(translator, n=node.predicate, schema=schema)
+        result = ir.Filter(schema, mask, joined)
+        return (
+            ir.Slice(schema, zlice[0], zlice[1], result)
+            if zlice is not None
+            else result
+        )
+
+    if how in {
         "Inner",
         "Left",
         "Right",
